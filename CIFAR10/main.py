@@ -15,7 +15,7 @@ from tensorboardX import SummaryWriter
 import torchvision
 import torchvision.transforms as transforms
 
-from freeze import freeze_weights, freeze_biases, freeze_gamma, freeze_beta
+import bnutils
 
 from models import *
 
@@ -101,13 +101,13 @@ def main():
             exit()
             
     if args.freeze_weights:
-        model = freeze_weights(model)
+        model = bnutils.freeze_weights(model)
     if args.freeze_biases:
-        model = freeze_biases(model)
+        model = bnutils.freeze_biases(model)
     if args.freeze_gamma:
-        model = freeze_gamma(model)
+        model = bnutils.freeze_gamma(model)
     if args.freeze_beta:
-        model = freeze_beta(model)
+        model = bnutils.freeze_beta(model)
 
     print('=> loading cifar10 data...')
     normalize = transforms.Normalize(mean=[0.491, 0.482, 0.447], std=[0.247, 0.243, 0.262])
