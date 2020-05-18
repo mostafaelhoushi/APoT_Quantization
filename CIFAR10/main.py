@@ -2,6 +2,7 @@ import argparse
 import os
 import time
 import shutil
+from contextlib import redirect_stdout
 
 import torch
 import torch.nn as nn
@@ -13,6 +14,8 @@ from tensorboardX import SummaryWriter
 
 import torchvision
 import torchvision.transforms as transforms
+
+from freeze import freeze_weights, freeze_biases, freeze_gamma, freeze_beta
 
 from models import *
 
@@ -31,6 +34,14 @@ parser.add_argument('-ct', '--cifar-type', default='10', type=int, metavar='CT',
 parser.add_argument('--init', help='initialize form pre-trained floating point model', type=str, default='')
 parser.add_argument('-id', '--device', default='0', type=str, help='gpu device')
 parser.add_argument('--bit', default=4, type=int, help='the bit-width of the quantized network')
+
+parser.add_argument('--freeze-weights', dest='freeze_weights', action='store_true', help='freeze weights of conv and linear layers')
+parser.add_argument('--freeze-biases', dest='freeze_biases', action='store_true', help='freeze biases of convolution and fully-connected layers')
+parser.add_argument('--freeze-gamma', dest='freeze_gamma', action='store_true', help='freeze gamma of batchnorm layers')
+parser.add_argument('--freeze-beta', dest='freeze_beta', action='store_true', help='freeze beta of batchnorm layers')
+
+parser.add_argument('--result-dir', type=str, default='result', help='directory to log the checkpoints and weight logs to')
+parser.add_argument('--print-weights', default=True, type=lambda x:bool(distutils.util.strtobool(x)), help='For printing the weights of Model (default: True)')
 
 best_prec = 0
 args = parser.parse_args()
@@ -74,9 +85,9 @@ def main():
         print('Cuda is not available!')
         return
 
-    if not os.path.exists('result'):
-        os.makedirs('result')
-    fdir = 'result/'+str(args.arch)+'_'+str(args.bit)+'bit'
+    if not os.path.exists(args.result_dir):
+        os.makedirs(args.result_dir)
+    fdir = args.result_dir+'/'+str(args.arch)+'_'+str(args.bit)+'bit'
     if not os.path.exists(fdir):
         os.makedirs(fdir)
 
@@ -88,6 +99,15 @@ def main():
         else:
             print('No pre-trained model found !')
             exit()
+            
+    if args.freeze_weights:
+        model = freeze_weights(model)
+    if args.freeze_biases:
+        model = freeze_biases(model)
+    if args.freeze_gamma:
+        model = freeze_gamma(model)
+    if args.freeze_beta:
+        model = freeze_beta(model)
 
     print('=> loading cifar10 data...')
     normalize = transforms.Normalize(mean=[0.491, 0.482, 0.447], std=[0.247, 0.243, 0.262])
@@ -117,7 +137,7 @@ def main():
         validate(testloader, model, criterion)
         model.module.show_params()
         return
-    writer = SummaryWriter(comment=fdir.replace('result/', ''))
+    writer = SummaryWriter(comment=fdir.replace(args.result_dir, ''))
 
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch)
@@ -137,6 +157,19 @@ def main():
         is_best = prec > best_prec
         best_prec = max(prec,best_prec)
         print('best acc: {:1f}'.format(best_prec))
+        
+        if (args.print_weights):
+            os.makedirs(os.path.join(fdir, 'weights_logs'), exist_ok=True)
+            with open(os.path.join(fdir, 'weights_logs', 'weights_log_' + str(epoch) + '.txt'), 'w') as weights_log_file:
+                with redirect_stdout(weights_log_file):
+                    # Log model's state_dict
+                    print("Model's state_dict:")
+                    # TODO: Use checkpoint above
+                    for param_tensor in model.state_dict():
+                        print(param_tensor, "\t", model.state_dict()[param_tensor].size())
+                        print(model.state_dict()[param_tensor])
+                        print("")        
+        
         save_checkpoint({
             'epoch': epoch + 1,
             'state_dict': model.state_dict(),
@@ -251,6 +284,10 @@ def save_checkpoint(state, is_best, fdir):
     torch.save(state, filepath)
     if is_best:
         shutil.copyfile(filepath, os.path.join(fdir, 'model_best.pth.tar'))
+        
+    if (state['epoch']-1)%10 == 0:
+        os.makedirs(os.path.join(fdir, 'checkpoints'), exist_ok=True)
+        shutil.copyfile(filepath, os.path.join(fdir, 'checkpoints', 'checkpoint_' + str(state['epoch']-1) + '.pth.tar'))  
 
 
 def adjust_learning_rate(optimizer, epoch):
