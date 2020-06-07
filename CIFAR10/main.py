@@ -34,11 +34,14 @@ parser.add_argument('-ct', '--cifar-type', default='10', type=int, metavar='CT',
 parser.add_argument('--init', help='initialize form pre-trained floating point model', type=str, default='')
 parser.add_argument('-id', '--device', default='0', type=str, help='gpu device')
 parser.add_argument('--bit', default=4, type=int, help='the bit-width of the quantized network')
+parser.add_argument('--additive', default=True, type=lambda x:bool(distutils.util.strtobool(x)), help='use additive powers of two')
 
 parser.add_argument('--freeze-weights', dest='freeze_weights', action='store_true', help='freeze weights of conv and linear layers')
 parser.add_argument('--freeze-biases', dest='freeze_biases', action='store_true', help='freeze biases of convolution and fully-connected layers')
 parser.add_argument('--freeze-gamma', dest='freeze_gamma', action='store_true', help='freeze gamma of batchnorm layers')
 parser.add_argument('--freeze-beta', dest='freeze_beta', action='store_true', help='freeze beta of batchnorm layers')
+parser.add_argument('--no-backward-pass', dest='no_backward_pass', action='store_true', help='train using forward pass only to update running mean and var')
+parser.add_argument('--update-mean-var', dest='update_mean_var', action='store_true', help='set absolute values of mean and var for batchnorm layers')
 
 parser.add_argument('--result-dir', type=str, default='result', help='directory to log the checkpoints and weight logs to')
 parser.add_argument('--print-weights', default=True, type=lambda x:bool(distutils.util.strtobool(x)), help='For printing the weights of Model (default: True)')
@@ -132,6 +135,9 @@ def main():
             normalize,
         ]))
     testloader = torch.utils.data.DataLoader(test_dataset, batch_size=100, shuffle=False, num_workers=2)
+    
+    if args.update_mean_var:
+        model = bnutils.update_mean_var(model, trainloader)
 
     if args.evaluate:
         validate(testloader, model, criterion)
@@ -222,8 +228,9 @@ def train(trainloader, model, criterion, optimizer, epoch):
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if args.no_backward_pass is False:
+            loss.backward()
+            optimizer.step()
 
         # measure elapsed time
         batch_time.update(time.time() - end)
