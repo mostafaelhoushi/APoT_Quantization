@@ -2,6 +2,7 @@ import argparse
 import os
 import time
 import shutil
+import distutils
 from contextlib import redirect_stdout
 
 import torch
@@ -59,9 +60,9 @@ def main():
     if use_gpu:
         float = True if args.bit == 32 else False
         if args.arch == 'res20':
-            model = resnet20_cifar(float=float)
+            model = resnet20_cifar(float=float, additive=args.additive)
         elif args.arch == 'res56':
-            model = resnet56_cifar(float=float)
+            model = resnet56_cifar(float=float, additive=args.additive)
         else:
             print('Architecture not support!')
             return
