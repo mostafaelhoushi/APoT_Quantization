@@ -100,7 +100,7 @@ def weight_quantization(b, grids, power=True, train_alpha=True):
 
 
 class weight_quantize_fn(nn.Module):
-    def __init__(self, w_bit, power=True, additive=True, train_alpha=True):
+    def __init__(self, w_bit, power=True, additive=True, train_alpha=True, weightnorm=True):
         super(weight_quantize_fn, self).__init__()
         assert (w_bit <=5 and w_bit > 0) or w_bit == 32
         self.w_bit = w_bit-1
@@ -111,14 +111,16 @@ class weight_quantize_fn(nn.Module):
             self.register_parameter('wgt_alpha', Parameter(torch.tensor(3.0)))
         else:
             self.wgt_alpha = torch.tensor(3.0)
+        self.weightnorm = weightnorm
 
     def forward(self, weight):
         if self.w_bit == 32:
             weight_q = weight
         else:
-            mean = weight.data.mean()
-            std = weight.data.std()
-            weight = weight.add(-mean).div(std)      # weights normalization
+            if self.weightnorm:
+                mean = weight.data.mean()
+                std = weight.data.std()
+                weight = weight.add(-mean).div(std)      # weights normalization
             weight_q = self.weight_q(weight, self.wgt_alpha)
         return weight_q
 
@@ -167,12 +169,12 @@ def act_quantization(b, grid, power=True, train_alpha=True):
 
 
 class QuantConv2d(nn.Conv2d):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, additive=True, train_alpha=True):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, additive=True, train_alpha=True, weightnorm=True):
         super(QuantConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups,
                                           bias)
         self.layer_type = 'QuantConv2d'
         self.bit = 4
-        self.weight_quant = weight_quantize_fn(w_bit=self.bit, power=True, train_alpha=train_alpha)
+        self.weight_quant = weight_quantize_fn(w_bit=self.bit, power=True, train_alpha=train_alpha, weightnorm=weightnorm)
         self.act_grid = build_power_value(self.bit, additive=additive)
         self.act_alq = act_quantization(self.bit, self.act_grid, power=True, train_alpha=train_alpha)
         if train_alpha:
