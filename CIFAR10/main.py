@@ -36,6 +36,7 @@ parser.add_argument('--init', help='initialize form pre-trained floating point m
 parser.add_argument('-id', '--device', default='0', type=str, help='gpu device')
 parser.add_argument('--bit', default=4, type=int, help='the bit-width of the quantized network')
 parser.add_argument('--additive', default=True, type=lambda x:bool(distutils.util.strtobool(x)), help='use additive powers of two')
+parser.add_argument('--train-alpha', default=True, type=lambda x:bool(distutils.util.strtobool(x)), help='make alpha trainable')
 
 parser.add_argument('--freeze-weights', dest='freeze_weights', action='store_true', help='freeze weights of conv and linear layers')
 parser.add_argument('--freeze-biases', dest='freeze_biases', action='store_true', help='freeze biases of convolution and fully-connected layers')
@@ -60,18 +61,18 @@ def main():
     if use_gpu:
         float = True if args.bit == 32 else False
         if args.arch == 'res20':
-            model = resnet20_cifar(float=float, additive=args.additive)
+            model = resnet20_cifar(float=float, additive=args.additive, train_alpha=args.train_alpha)
         elif args.arch == 'res56':
-            model = resnet56_cifar(float=float, additive=args.additive)
+            model = resnet56_cifar(float=float, additive=args.additive, train_alpha=args.train_alpha)
         else:
             print('Architecture not support!')
             return
         if not float:
             for m in model.modules():
                 if isinstance(m, QuantConv2d):
-                    m.weight_quant = weight_quantize_fn(w_bit=args.bit)
+                    m.weight_quant = weight_quantize_fn(w_bit=args.bit, train_alpha=args.train_alpha)
                     m.act_grid = build_power_value(args.bit)
-                    m.act_alq = act_quantization(args.bit, m.act_grid)
+                    m.act_alq = act_quantization(args.bit, m.act_grid, train_alpha=args.train_alpha)
 
         model = nn.DataParallel(model).cuda()
         criterion = nn.CrossEntropyLoss().cuda()
