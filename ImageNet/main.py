@@ -78,6 +78,32 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
 
+parser.add_argument('--additive', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
+                    help='use additive powers of two')
+parser.add_argument('--train-alpha', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
+                    help='make alpha trainable')
+parser.add_argument('-wn', '--weightnorm', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
+                    help='normalize weights')
+
+parser.add_argument('--freeze-weights', dest='freeze_weights', action='store_true', 
+                    help='freeze weights of conv and linear layers')
+parser.add_argument('--freeze-biases', dest='freeze_biases', action='store_true', 
+                    help='freeze biases of convolution and fully-connected layers')
+parser.add_argument('--freeze-gamma', dest='freeze_gamma', action='store_true', 
+                    help='freeze gamma of batchnorm layers')
+parser.add_argument('--freeze-beta', dest='freeze_beta', action='store_true', 
+                    help='freeze beta of batchnorm layers')
+parser.add_argument('--no-backward-pass', dest='no_backward_pass', action='store_true', 
+                    help='train using forward pass only to update running mean and var')
+parser.add_argument('--update-mean-var', dest='update_mean_var', action='store_true', 
+                    help='set absolute values of mean and var for batchnorm layers')
+
+parser.add_argument('--result-dir', type=str, default='result', 
+                    help='directory to log the checkpoints and weight logs to')
+parser.add_argument('--print-weights', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
+                    help='For printing the weights of Model (default: True)')
+
+
 best_acc1 = 0
 
 
@@ -134,7 +160,7 @@ def main_worker(gpu, ngpus_per_node, args):
                                 world_size=args.world_size, rank=args.rank)
     # create model
     print("=> creating model '{}'".format(args.arch))
-    model = models.__dict__[args.arch](pretrained=True, bit=args.bit)
+    model = models.__dict__[args.arch](pretrained=True, bit=args.bit, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm)
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -222,7 +248,7 @@ def main_worker(gpu, ngpus_per_node, args):
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
-    torchvision.set_image_backend('accimage')
+    #torchvision.set_image_backend('accimage')
     train_dataset = datasets.ImageFolder(
         traindir,
         transforms.Compose([

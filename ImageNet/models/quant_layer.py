@@ -64,7 +64,7 @@ def gradient_scale(x, scale):
     return y
 
 
-def apot_quantization(tensor, alpha, proj_set, is_weight=True, grad_scale=None):
+def apot_quantization(tensor, alpha, proj_set, is_weight=True, grad_scale=None, train_alpha=True):
     def power_quant(x, value_s):
         if is_weight:
             shape = x.shape
@@ -86,8 +86,9 @@ def apot_quantization(tensor, alpha, proj_set, is_weight=True, grad_scale=None):
         xout = (xhard - x).detach() + x
         return xout
 
-    if grad_scale:
-        alpha = gradient_scale(alpha, grad_scale)
+    if train_alpha:
+        if grad_scale:
+            alpha = gradient_scale(alpha, grad_scale)
     data = tensor / alpha
     if is_weight:
         data = data.clamp(-1, 1)
@@ -100,7 +101,7 @@ def apot_quantization(tensor, alpha, proj_set, is_weight=True, grad_scale=None):
     return data_q
 
 
-def uq_with_calibrated_graditens(grad_scale=None):
+def uq_with_calibrated_graditens(grad_scale=None, train_alpha=True):
     class _uq(torch.autograd.Function):
         @staticmethod
         def forward(ctx, input, alpha):
@@ -117,17 +118,21 @@ def uq_with_calibrated_graditens(grad_scale=None):
             input, input_q = ctx.saved_tensors
             i = (input.abs() > 1.).float()
             sign = input.sign()
-            grad_alpha = (grad_output * (sign * i + (input_q - input) * (1 - i))).sum()
-            if grad_scale:
-                grad_alpha = grad_alpha * grad_scale
+            if train_alpha:
+                grad_alpha = (grad_output * (sign * i + (input_q - input) * (1 - i))).sum()
+                if grad_scale:
+                    grad_alpha = grad_alpha * grad_scale
+            else:
+                grad_alpha = None
             return grad_input, grad_alpha
 
     return _uq().apply
 
 
-def uniform_quantization(tensor, alpha, bit, is_weight=True, grad_scale=None):
-    if grad_scale:
-        alpha = gradient_scale(alpha, grad_scale)
+def uniform_quantization(tensor, alpha, bit, is_weight=True, grad_scale=None, train_alpha=True):
+    if train_alpha:
+        if grad_scale:
+            alpha = gradient_scale(alpha, grad_scale)
     data = tensor / alpha
     if is_weight:
         data = data.clamp(-1, 1)
@@ -162,40 +167,49 @@ class QuantConv2d(nn.Conv2d):
     """
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1,
-                 bias=False, bit=5, power=True, additive=True, grad_scale=None):
+                 bias=False, bit=5, power=True, additive=True, grad_scale=None, train_alpha=True, weightnorm=True):
         super(QuantConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups,
                                           bias)
         self.layer_type = 'QuantConv2d'
         self.bit = bit
         self.power = power
         self.grad_scale = grad_scale
+        self.train_alpha = train_alpha
+        self.weightnorm = weightnorm
         if power:
             if self.bit > 2:
                 self.proj_set_weight = build_power_value(B=self.bit - 1, additive=additive)
             self.proj_set_act = build_power_value(B=self.bit, additive=additive)
-        self.act_alpha = torch.nn.Parameter(torch.tensor(6.0))
-        self.weight_alpha = torch.nn.Parameter(torch.tensor(3.0))
+        if self.train_alpha:
+            self.act_alpha = torch.nn.Parameter(torch.tensor(6.0))
+            self.weight_alpha = torch.nn.Parameter(torch.tensor(3.0))
+        else:
+            self.act_alpha = torch.tensor(6.0)
+            self.weight_alpha = torch.tensor(3.0)
 
     def forward(self, x):
         if self.bit == 32:
             return F.conv2d(x, self.weight, self.bias, self.stride,
                             self.padding, self.dilation, self.groups)
         # weight normalization
-        mean = self.weight.mean()
-        std = self.weight.std()
-        weight = self.weight.add(-mean).div(std)
+        if self.weightnorm:
+            mean = self.weight.mean()
+            std = self.weight.std()
+            weight = self.weight.add(-mean).div(std)
+        else:
+            weight = self.weight
         if self.power:
             if self.bit > 2:
-                weight = apot_quantization(weight, self.weight_alpha, self.proj_set_weight, True, self.grad_scale)
+                weight = apot_quantization(weight, self.weight_alpha, self.proj_set_weight, True, self.grad_scale, self.train_alpha)
             else:
-                weight = uq_with_calibrated_graditens(self.grad_scale)(weight, self.weight_alpha)
-            x = apot_quantization(x, self.act_alpha, self.proj_set_act, False, self.grad_scale)
+                weight = uq_with_calibrated_graditens(self.grad_scale)(weight, self.weight_alpha, self.train_alpha)
+            x = apot_quantization(x, self.act_alpha, self.proj_set_act, False, self.grad_scale, self.train_alpha)
         else:
             if self.bit > 2:
-                weight = uniform_quantization(weight, self.weight_alpha, self.bit, True, self.grad_scale)
+                weight = uniform_quantization(weight, self.weight_alpha, self.bit, True, self.grad_scale, self.train_alpha)
             else:
-                weight = uq_with_calibrated_graditens(self.grad_scale)(weight, self.weight_alpha)
-            x = uniform_quantization(x, self.act_alpha, self.bit, False, self.grad_scale)
+                weight = uq_with_calibrated_graditens(self.grad_scale)(weight, self.weight_alpha, self.train_alpha)
+            x = uniform_quantization(x, self.act_alpha, self.bit, False, self.grad_scale, self.train_alpha)
         return F.conv2d(x, weight, self.bias, self.stride,
                         self.padding, self.dilation, self.groups)
 
