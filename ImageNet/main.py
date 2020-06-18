@@ -82,6 +82,7 @@ parser.add_argument('--additive', default=True, type=lambda x:bool(distutils.uti
                     help='use additive powers of two')
 parser.add_argument('--train-alpha', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
                     help='make alpha trainable')
+
 parser.add_argument('-wn', '--weightnorm', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
                     help='normalize weights')
 
@@ -236,6 +237,15 @@ def main_worker(gpu, ngpus_per_node, args):
 
     cudnn.benchmark = True
 
+    if args.freeze_weights:
+        model = bnutils.freeze_weights(model)
+    if args.freeze_biases:
+        model = bnutils.freeze_biases(model)
+    if args.freeze_gamma:
+        model = bnutils.freeze_gamma(model)
+    if args.freeze_beta:
+        model = bnutils.freeze_beta(model)
+
     # data loader by official torchversion:
     # --------------------------------------------------------------------------
     print('==> Using Pytorch Dataset')
@@ -340,8 +350,9 @@ def train(train_loader, model, criterion, optimizer, epoch, args, writer):
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if args.no_backward_pass is False:
+            loss.backward()
+            optimizer.step()
 
         # measure elapsed time
         batch_time.update(time.time() - end)
