@@ -4,6 +4,7 @@ import time
 import shutil
 import distutils
 from contextlib import redirect_stdout
+import csv
 
 import torch
 import torch.nn as nn
@@ -147,6 +148,15 @@ def main():
     if args.update_mean_var:
         model = bnutils.update_mean_var(model, trainloader)
 
+    # Log model architecture and command arguments
+    with open(os.path.join(args.result_dir, 'command_args.txt'), 'w') as command_args_file:
+        for arg, value in sorted(vars(args).items()):
+            command_args_file.write(arg + ": " + str(value) + "\n")
+
+    with open(os.path.join(args.result_dir, 'model.txt'), 'w') as model_txt_file:
+        with redirect_stdout(model_txt_file):
+            print(model)
+
     if args.evaluate:
         validate(testloader, model, criterion)
         model.module.show_params()
@@ -161,10 +171,11 @@ def main():
         if epoch%10 == 1:
             model.module.show_params()
         # model.module.record_clip(writer, epoch)
-        train(trainloader, model, criterion, optimizer, epoch)
+        train_log = train(trainloader, model, criterion, optimizer, epoch)
 
         # evaluate on test set
-        prec = validate(testloader, model, criterion)
+        val_log = validate(testloader, model, criterion)
+        prec = val_log['val_acc']
         writer.add_scalar('test_acc', prec, epoch)
 
         # remember best precision and save checkpoint
@@ -173,23 +184,16 @@ def main():
         print('best acc: {:1f}'.format(best_prec))
         
         if (args.print_weights):
-            os.makedirs(os.path.join(fdir, 'weights_logs'), exist_ok=True)
-            with open(os.path.join(fdir, 'weights_logs', 'weights_log_' + str(epoch) + '.txt'), 'w') as weights_log_file:
-                with redirect_stdout(weights_log_file):
-                    # Log model's state_dict
-                    print("Model's state_dict:")
-                    # TODO: Use checkpoint above
-                    for param_tensor in model.state_dict():
-                        print(param_tensor, "\t", model.state_dict()[param_tensor].size())
-                        print(model.state_dict()[param_tensor])
-                        print("")        
+            log_weights(model.state_dict(), epoch, args.result_dir)   
         
+        log_csv(epoch, train_log, val_log, args.result_dir)
+
         save_checkpoint({
             'epoch': epoch + 1,
             'state_dict': model.state_dict(),
             'best_prec': best_prec,
             'optimizer': optimizer.state_dict(),
-        }, is_best, fdir)
+        }, is_best, args.result_dir)
 
 
 class AverageMeter(object):
@@ -255,6 +259,8 @@ def train(trainloader, model, criterion, optimizer, epoch):
                    epoch, i, len(trainloader), batch_time=batch_time,
                    data_time=data_time, loss=losses, top1=top1))
 
+    return {"train_losses": losses.avg, "train_acc": top1.avg, "train_batch_time": batch_time.avg, "train_data_time": data_time.avg, "train_epoch_time": batch_time.sum}
+
 def validate(val_loader, model, criterion):
     batch_time = AverageMeter()
     losses = AverageMeter()
@@ -291,7 +297,7 @@ def validate(val_loader, model, criterion):
 
     print(' * Prec {top1.avg:.3f}% '.format(top1=top1))
 
-    return top1.avg
+    return {"val_losses": losses.avg, "val_acc": top1.avg, "val_batch_time": batch_time.avg, "val_epoch_time": batch_time.sum}
 
 
 def save_checkpoint(state, is_best, fdir):
@@ -304,6 +310,29 @@ def save_checkpoint(state, is_best, fdir):
         os.makedirs(os.path.join(fdir, 'checkpoints'), exist_ok=True)
         shutil.copyfile(filepath, os.path.join(fdir, 'checkpoints', 'checkpoint_' + str(state['epoch']-1) + '.pth.tar'))  
 
+def log_weights(state_dict, epoch, result_dir):
+    os.makedirs(os.path.join(result_dir, 'weights_logs'), exist_ok=True)
+    with open(os.path.join(result_dir, 'weights_logs', 'weights_log_' + str(epoch) + '.txt'), 'w') as weights_log_file:
+        with redirect_stdout(weights_log_file):
+            # Log model's state_dict
+            print("Model's state_dict:")
+            # TODO: Use checkpoint above
+            for param_tensor in state_dict:
+                print(param_tensor, "\t", state_dict[param_tensor].size())
+                print(state_dict[param_tensor])
+                print("") 
+
+def log_csv(epoch, train_log, val_log, result_dir):
+    csv_filename = os.path.join(result_dir, 'train_log.csv')
+
+    if os.path.isfile(csv_filename) is False:
+        with open(csv_filename, "w") as csv_file:
+            csv_log = csv.writer(csv_file)
+            csv_log.writerow((('epoch',) + tuple(train_log.keys()) + tuple(val_log.keys())))
+
+    with open(csv_filename, "a") as csv_file:
+        csv_log = csv.writer(csv_file)
+        csv_log.writerow(((epoch,) + tuple(train_log.values()) + tuple(val_log.values())))
 
 def adjust_learning_rate(optimizer, epoch):
     """For resnet, the lr starts from 0.1, and is divided by 10 at 80 and 120 epochs"""
