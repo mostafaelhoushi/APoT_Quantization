@@ -73,12 +73,12 @@ def main():
         if not float:
             for m in model.modules():
                 if isinstance(m, QuantConv2d):
-                    m.weight_quant = weight_quantize_fn(w_bit=args.bit, train_alpha=args.train_alpha, weightnorm=args.weightnorm)
-                    m.act_grid = build_power_value(args.bit)
+                    m.weight_quant = weight_quantize_fn(w_bit=args.bit, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm)
+                    m.act_grid = build_power_value(args.bit, additive=args.additive)
                     m.act_alq = act_quantization(args.bit, m.act_grid, train_alpha=args.train_alpha)
                 if isinstance(m, ShiftConv2d):
-                    m.weight_quant = weight_shift_fn(w_bit=args.bit, train_alpha=args.train_alpha, weightnorm=args.weightnorm)
-                    m.act_grid = build_power_value(args.bit)
+                    m.weight_quant = weight_shift_fn(w_bit=args.bit, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm)
+                    m.act_grid = build_power_value(args.bit, additive=args.additive)
                     m.act_alq = act_quantization(args.bit, m.act_grid, train_alpha=args.train_alpha)
 
         model = nn.DataParallel(model).cuda()

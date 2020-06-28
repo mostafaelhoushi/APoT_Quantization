@@ -174,7 +174,7 @@ class ShiftConv2d(nn.Conv2d):
                                           bias)
         self.layer_type = 'ShiftConv2d'
         self.bit = 4
-        self.weight_quant = weight_shift_fn(w_bit=self.bit, power=True, train_alpha=train_alpha, weightnorm=weightnorm)
+        self.weight_quant = weight_shift_fn(w_bit=self.bit, power=True, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm)
         self.act_grid = build_power_value(self.bit, additive=additive)
         self.act_alq = act_quantization(self.bit, self.act_grid, power=True, train_alpha=train_alpha)
         if train_alpha:
