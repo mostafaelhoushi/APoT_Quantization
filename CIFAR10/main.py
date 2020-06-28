@@ -38,6 +38,9 @@ parser.add_argument('-id', '--device', default='0', type=str, help='gpu device')
 parser.add_argument('--bit', default=4, type=int, help='the bit-width of the quantized network')
 parser.add_argument('--additive', default=True, type=lambda x:bool(distutils.util.strtobool(x)), help='use additive powers of two')
 parser.add_argument('--train-alpha', default=True, type=lambda x:bool(distutils.util.strtobool(x)), help='make alpha trainable')
+parser.add_argument('--wgt-alpha-init', default=3.0, help='initial clipping for weights')
+parser.add_argument('--act-alpha-init', default=8.0, help='initial clipping for activations')
+parser.add_argument('--gridnorm', default=True, type=lambda x:bool(distutils.util.strtobool(x)), help='normalize the possible quantization values')
 parser.add_argument('-wn', '--weightnorm', default=True, type=lambda x:bool(distutils.util.strtobool(x)), help='normalize weights')
 parser.add_argument('-s', '--shift', default=False, type=lambda x:bool(distutils.util.strtobool(x)), help='use PS method')
 
@@ -64,9 +67,9 @@ def main():
     if use_gpu:
         float = True if args.bit == 32 else False
         if args.arch == 'res20':
-            model = resnet20_cifar(float=float, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm, shift=args.shift)
+            model = resnet20_cifar(float=float, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm, shift=args.shift, gridnorm=args.gridnorm, wgt_alpha_init=args.wgt_alpha_init, act_alpha_init=args.act_alpha_init)
         elif args.arch == 'res56':
-            model = resnet56_cifar(float=float, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm, shift=args.shift)
+            model = resnet56_cifar(float=float, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm, shift=args.shift, gridnorm=args.gridnorm, wgt_alpha_init=args.wgt_alpha_init, act_alpha_init=args.act_alpha_init)
         else:
             print('Architecture not support!')
             return
