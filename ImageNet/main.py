@@ -42,9 +42,12 @@ parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('-b', '--batch-size', default=1024, type=int,
                     metavar='N',
-                    help='mini-batch size (default: 256), this is the total '
+                    help='mini-batch size (default: 1024), this is the total '
                          'batch size of all GPUs on the current node when '
                          'using Data Parallel or Distributed Data Parallel')
+parser.add_argument('-bm', '--batch-multiplier', default=1, type=int,
+                    help='used to have an effective bigger batch size that may be '
+                    'too big for GPU memory sizes')
 parser.add_argument('--bit', default=5, type=int, help='the bit-width of the quantized network')
 parser.add_argument('--data', metavar='DATA_PATH', default='./data/',
                     help='path to imagenet data (default: ./data/)')
@@ -343,6 +346,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args, writer):
         # compute output
         output = model(images)
         loss = criterion(output, target)
+        loss = loss / args.batch_multiplier # Normalize our loss (if averaged)
 
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -351,10 +355,12 @@ def train(train_loader, model, criterion, optimizer, epoch, args, writer):
         top5.update(acc5[0], images.size(0))
 
         # compute gradient and do SGD step
-        optimizer.zero_grad()
+        loss.backward()
         if args.no_backward_pass is False:
-            loss.backward()
-            optimizer.step()
+            if (i+1) % args.batch_multiplier == 0: # Wait for several backward steps
+                optimizer.step()
+                optimizer.zero_grad()
+
 
         # measure elapsed time
         batch_time.update(time.time() - end)
