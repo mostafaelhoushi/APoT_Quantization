@@ -9,6 +9,7 @@ import random
 import shutil
 import time
 import warnings
+import distutils.util
 
 import torch
 import torch.nn as nn
@@ -24,6 +25,8 @@ from models.quant_layer import *
 from tensorboardX import SummaryWriter
 import sys
 import gc
+
+import bnutils
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
@@ -82,7 +85,6 @@ parser.add_argument('--additive', default=True, type=lambda x:bool(distutils.uti
                     help='use additive powers of two')
 parser.add_argument('--train-alpha', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
                     help='make alpha trainable')
-
 parser.add_argument('-wn', '--weightnorm', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
                     help='normalize weights')
 
