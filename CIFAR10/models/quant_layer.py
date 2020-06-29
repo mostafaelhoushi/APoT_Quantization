@@ -5,7 +5,7 @@ from torch.nn.parameter import Parameter
 
 
 # this function construct an additive pot quantization levels set, with clipping threshold = 1,
-def build_power_value(B=2, additive=True):
+def build_power_value(B=2, additive=True, gridnorm=True):
     base_a = [0.]
     base_b = [0.]
     base_c = [0.]
@@ -49,11 +49,12 @@ def build_power_value(B=2, additive=True):
             for c in base_c:
                 values.append((a + b + c))
     values = torch.Tensor(list(set(values)))
-    values = values.mul(1.0 / torch.max(values))
+    if gridnorm:
+        values = values.mul(1.0 / torch.max(values))
     return values
 
 
-def weight_quantization(b, grids, power=True, train_alpha=True):
+def weight_quantization(b, grids, power=True, train_alpha=True, gridnorm=True):
 
     def uniform_quant(x, b):
         xdiv = x.mul((2 ** b - 1))
@@ -72,23 +73,30 @@ def weight_quantization(b, grids, power=True, train_alpha=True):
     class _pq(torch.autograd.Function):
         @staticmethod
         def forward(ctx, input, alpha):
-            input.div_(alpha)                          # weights are first divided by alpha
-            input_c = input.clamp(min=-1, max=1)       # then clipped to [-1,1]
+            if gridnorm:
+                input.div_(alpha)                          # weights are first divided by alpha
+                input_c = input.clamp(min=-1, max=1)       # then clipped to [-1,1]
+            else:
+                input_c = input.clamp(min=-alpha.item(), max=+alpha.item())
             sign = input_c.sign()
             input_abs = input_c.abs()
             if power:
                 input_q = power_quant(input_abs, grids).mul(sign)  # project to Q^a(alpha, B)
             else:
                 input_q = uniform_quant(input_abs, b).mul(sign)
-            ctx.save_for_backward(input, input_q)
-            input_q = input_q.mul(alpha)               # rescale to the original range
+            ctx.save_for_backward(input, input_q, alpha)
+            if gridnorm:
+                input_q = input_q.mul(alpha)               # rescale to the original range
             return input_q
 
         @staticmethod
         def backward(ctx, grad_output):
             grad_input = grad_output.clone()             # grad for weights will not be clipped
-            input, input_q = ctx.saved_tensors
-            i = (input.abs()>1.).float()
+            input, input_q, alpha = ctx.saved_tensors
+            if gridnorm:
+                i = (input.abs()>1.0).float()
+            else:
+                i = (input.abs()>alpha.item()).float()
             sign = input.sign()
             if train_alpha:
                 grad_alpha = (grad_output*(sign*i + (input_q-input)*(1-i))).sum()
@@ -100,17 +108,17 @@ def weight_quantization(b, grids, power=True, train_alpha=True):
 
 
 class weight_quantize_fn(nn.Module):
-    def __init__(self, w_bit, power=True, additive=True, train_alpha=True, weightnorm=True):
+    def __init__(self, w_bit, power=True, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0):
         super(weight_quantize_fn, self).__init__()
         assert (w_bit <=5 and w_bit > 0) or w_bit == 32
         self.w_bit = w_bit-1
         self.power = power if w_bit>2 else False
-        self.grids = build_power_value(self.w_bit, additive=additive)
-        self.weight_q = weight_quantization(b=self.w_bit, grids=self.grids, power=self.power, train_alpha=train_alpha)
+        self.grids = build_power_value(self.w_bit, additive=additive, gridnorm=gridnorm)
+        self.weight_q = weight_quantization(b=self.w_bit, grids=self.grids, power=self.power, train_alpha=train_alpha, gridnorm=gridnorm)
         if train_alpha:
-            self.register_parameter('wgt_alpha', Parameter(torch.tensor(3.0)))
+            self.register_parameter('wgt_alpha', Parameter(torch.tensor(wgt_alpha_init)))
         else:
-            self.wgt_alpha = torch.tensor(3.0)
+            self.wgt_alpha = torch.tensor(wgt_alpha_init)
         self.weightnorm = weightnorm
 
     def forward(self, weight):
@@ -125,7 +133,7 @@ class weight_quantize_fn(nn.Module):
         return weight_q
 
 
-def act_quantization(b, grid, power=True, train_alpha=True):
+def act_quantization(b, grid, power=True, train_alpha=True, gridnorm=True):
 
     def uniform_quant(x, b=3):
         xdiv = x.mul(2 ** b - 1)
@@ -143,21 +151,28 @@ def act_quantization(b, grid, power=True, train_alpha=True):
     class _uq(torch.autograd.Function):
         @staticmethod
         def forward(ctx, input, alpha):
-            input=input.div(alpha)
-            input_c = input.clamp(max=1)
+            if gridnorm:
+                input=input.div(alpha)
+                input_c = input.clamp(max=1.0)
+            else:
+                input_c = input.clamp(max=alpha.item())
             if power:
                 input_q = power_quant(input_c, grid)
             else:
                 input_q = uniform_quant(input_c, b)
-            ctx.save_for_backward(input, input_q)
-            input_q = input_q.mul(alpha)
+            ctx.save_for_backward(input, input_q, alpha)
+            if gridnorm:
+                input_q = input_q.mul(alpha)
             return input_q
 
         @staticmethod
         def backward(ctx, grad_output):
             grad_input = grad_output.clone()
-            input, input_q = ctx.saved_tensors
-            i = (input > 1.).float()
+            input, input_q, alpha = ctx.saved_tensors
+            if gridnorm:
+                i = (input > 1.0).float()
+            else:
+                i = (input > alpha.item()).float()
             if train_alpha:
                 grad_alpha = (grad_output * (i + (input_q - input) * (1 - i))).sum()
             else:
@@ -169,18 +184,18 @@ def act_quantization(b, grid, power=True, train_alpha=True):
 
 
 class QuantConv2d(nn.Conv2d):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, additive=True, train_alpha=True, weightnorm=True):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0):
         super(QuantConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups,
                                           bias)
         self.layer_type = 'QuantConv2d'
         self.bit = 4
-        self.weight_quant = weight_quantize_fn(w_bit=self.bit, power=True, train_alpha=train_alpha, weightnorm=weightnorm)
-        self.act_grid = build_power_value(self.bit, additive=additive)
-        self.act_alq = act_quantization(self.bit, self.act_grid, power=True, train_alpha=train_alpha)
+        self.weight_quant = weight_shift_fn(w_bit=self.bit, power=True, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init)
+        self.act_grid = build_power_value(self.bit, additive=additive, gridnorm=gridnorm)
+        self.act_alq = act_quantization(self.bit, self.act_grid, power=True, train_alpha=train_alpha, gridnorm=gridnorm)
         if train_alpha:
-            self.act_alpha = torch.nn.Parameter(torch.tensor(8.0))
+            self.act_alpha = torch.nn.Parameter(torch.tensor(act_alpha_init))
         else:
-            self.act_alpha = torch.tensor(8.0)
+            self.act_alpha = torch.tensor(act_alpha_init)
 
     def forward(self, x):
         weight_q = self.weight_quant(self.weight)

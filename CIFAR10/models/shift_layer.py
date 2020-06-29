@@ -74,10 +74,10 @@ def weight_quantization(b, grids, power=True, train_alpha=True, gridnorm=True):
         @staticmethod
         def forward(ctx, input, alpha):
             if gridnorm:
-                input.div_(alpha)                          # weights are first divided by alpha
-                input_c = input.clamp(min=-alpha.item(), max=alpha.item())       # then clipped to [-alpha,alpha] (previously [-1,1])
+                input.div_(alpha)                           # weights are first divided by alpha
+                input_c = input.clamp(min=-1, max=+1)       # then clipped to [-1,1]
             else:
-                input_c = input.clamp(min=-1, max=+1)
+                input_c = input.clamp(min=-alpha.item(), max=alpha.item())
             sign = input_c.sign()
             input_abs = input_c.abs()
             if power:
@@ -153,9 +153,9 @@ def act_quantization(b, grid, power=True, train_alpha=True, gridnorm=True):
         def forward(ctx, input, alpha):
             if gridnorm:
                 input=input.div(alpha)
-                input_c = input.clamp(max=alpha.item())
-            else:
                 input_c = input.clamp(max=1.0)
+            else:
+                input_c = input.clamp(max=alpha.item())
             if power:
                 input_q = power_quant(input_c, grid)
             else:
