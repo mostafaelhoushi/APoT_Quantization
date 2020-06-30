@@ -189,7 +189,7 @@ class QuantConv2d(nn.Conv2d):
                                           bias)
         self.layer_type = 'QuantConv2d'
         self.bit = 4
-        self.weight_quant = weight_shift_fn(w_bit=self.bit, power=True, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init)
+        self.weight_quant = weight_quantize_fn(w_bit=self.bit, power=True, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init)
         self.act_grid = build_power_value(self.bit, additive=additive, gridnorm=gridnorm)
         self.act_alq = act_quantization(self.bit, self.act_grid, power=True, train_alpha=train_alpha, gridnorm=gridnorm)
         if train_alpha:

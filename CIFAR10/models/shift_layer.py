@@ -1,8 +1,11 @@
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
+from torch.nn.modules.utils import _pair
+from torch.nn import init
 from torch.nn.parameter import Parameter
 
+import math
 
 # this function construct an additive pot quantization levels set, with clipping threshold = 1,
 def build_power_value(B=2, additive=True, gridnorm=True):
@@ -54,7 +57,7 @@ def build_power_value(B=2, additive=True, gridnorm=True):
     return values
 
 
-def weight_quantization(b, grids, power=True, train_alpha=True, gridnorm=True):
+def weight_quantization(b, grids, train_alpha=True, gridnorm=True):
 
     def uniform_quant(x, b):
         xdiv = x.mul((2 ** b - 1))
@@ -80,10 +83,7 @@ def weight_quantization(b, grids, power=True, train_alpha=True, gridnorm=True):
                 input_c = input.clamp(min=-alpha.item(), max=alpha.item())
             sign = input_c.sign()
             input_abs = input_c.abs()
-            if power:
-                input_q = power_quant(input_abs, grids).mul(sign)  # project to Q^a(alpha, B)
-            else:
-                input_q = uniform_quant(input_abs, b).mul(sign)
+            input_q = power_quant(input_abs, grids).mul(sign)  # project to Q^a(alpha, B)
             ctx.save_for_backward(input, input_q, alpha)
             if gridnorm:
                 input_q = input_q.mul(alpha)               # rescale to the original range
@@ -114,22 +114,20 @@ class weight_shift_fn(nn.Module):
         self.w_bit = w_bit-1
         self.power = power if w_bit>2 else False
         self.grids = build_power_value(self.w_bit, additive=additive, gridnorm=gridnorm)
-        self.weight_q = weight_quantization(b=self.w_bit, grids=self.grids, power=self.power, train_alpha=train_alpha, gridnorm=gridnorm)
+        self.weight_q = weight_quantization(b=self.w_bit, grids=self.grids, train_alpha=train_alpha, gridnorm=gridnorm)
         if train_alpha:
             self.register_parameter('wgt_alpha', Parameter(torch.tensor(wgt_alpha_init)))
         else:
             self.wgt_alpha = torch.tensor(wgt_alpha_init)
         self.weightnorm = weightnorm
 
-    def forward(self, weight):
-        if self.w_bit == 32:
-            weight_q = weight
-        else:
-            if self.weightnorm:
-                mean = weight.data.mean()
-                std = weight.data.std()
-                weight = weight.add(-mean).div(std)      # weights normalization
-            weight_q = self.weight_q(weight, self.wgt_alpha)
+    def forward(self, shift, sign):
+        weight = 2**shift.round() * sign.round()
+        if self.weightnorm:
+            mean = weight.mean()
+            std = weight.std()
+            weight = weight.add(-mean).div(std)      # weights normalization
+        weight_q = self.weight_q(weight, self.wgt_alpha)
         return weight_q
 
 
@@ -183,12 +181,40 @@ def act_quantization(b, grid, power=True, train_alpha=True, gridnorm=True):
     return _uq().apply
 
 
-class ShiftConv2d(nn.Conv2d):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0):
-        super(ShiftConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups,
-                                          bias)
+class ShiftConv2d(nn.Module):
+    __constants__ = ['stride', 'padding', 'dilation', 'groups', 'bias', 'padding_mode']
+
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, padding_mode='zeros',
+                       additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0):
+        super(ShiftConv2d, self).__init__()
+        if in_channels % groups != 0:
+            raise ValueError('in_channels must be divisible by groups')
+        if out_channels % groups != 0:
+            raise ValueError('out_channels must be divisible by groups')
+
+        kernel_size = _pair(kernel_size)
+        stride = _pair(stride)
+        padding = _pair(padding)
+        dilation = _pair(dilation)
+        transposed = False
+        output_padding = _pair(0)
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.transposed = transposed
+        self.output_padding = output_padding
+        self.groups = groups
+        self.padding_mode = padding_mode
+
+
         self.layer_type = 'ShiftConv2d'
         self.bit = 4
+        # TODO: remove redundancy as variables similar weight_shift_range is calculated in other functions in the code
+        self.weight_shift_range = (-1 * (2**(self.bit - 1) - 1 -1), 0) # we use ternary weights to represent sign
         self.weight_quant = weight_shift_fn(w_bit=self.bit, power=True, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init)
         self.act_grid = build_power_value(self.bit, additive=additive, gridnorm=gridnorm)
         self.act_alq = act_quantization(self.bit, self.act_grid, power=True, train_alpha=train_alpha, gridnorm=gridnorm)
@@ -197,16 +223,67 @@ class ShiftConv2d(nn.Conv2d):
         else:
             self.act_alpha = torch.tensor(act_alpha_init)
 
-    def forward(self, x):
-        weight_q = self.weight_quant(self.weight)
+        if transposed:
+            self.shift = nn.Parameter(torch.Tensor(
+                in_channels, out_channels // groups, *kernel_size))
+            self.sign = nn.Parameter(torch.Tensor(
+                in_channels, out_channels // groups, *kernel_size))
+        else:
+            self.shift = nn.Parameter(torch.Tensor(
+                out_channels, in_channels // groups, *kernel_size))
+            self.sign = nn.Parameter(torch.Tensor(
+                out_channels, in_channels // groups, *kernel_size))
+        if bias:
+            self.bias = nn.Parameter(torch.Tensor(out_channels))
+        else:
+            self.register_parameter('bias', None)
+        self.reset_parameters()
+
+    def forward(self, x): 
+        weight_q = 2**self.shift.round() * self.sign.round().sign()  # self.weight_quant(self.shift, self.sign)
         x = self.act_alq(x, self.act_alpha)
         return F.conv2d(x, weight_q, self.bias, self.stride,
                         self.padding, self.dilation, self.groups)
+
+    def reset_parameters(self):
+        self.shift.data.uniform_(*self.weight_shift_range) # (-0.1, 0.1)
+        self.sign.data.uniform_(-1, 1) # (-0.1, 0.1)
+        if self.bias is not None:
+            fan_in, _ = init._calculate_fan_in_and_fan_out(self.shift)
+            bound = 1 / math.sqrt(fan_in)
+            init.uniform_(self.bias, -bound, bound)
+
+    def extra_repr(self):
+        s = ('{in_channels}, {out_channels}, kernel_size={kernel_size}'
+             ', stride={stride}')
+        if self.padding != (0,) * len(self.padding):
+            s += ', padding={padding}'
+        if self.dilation != (1,) * len(self.dilation):
+            s += ', dilation={dilation}'
+        if self.output_padding != (0,) * len(self.output_padding):
+            s += ', output_padding={output_padding}'
+        if self.groups != 1:
+            s += ', groups={groups}'
+        if self.bias is None:
+            s += ', bias=False'
+        return s.format(**self.__dict__)
 
     def show_params(self):
         wgt_alpha = round(self.weight_quant.wgt_alpha.data.item(), 3)
         act_alpha = round(self.act_alpha.data.item(), 3)
         print('clipping threshold weight alpha: {:2f}, activation alpha: {:2f}'.format(wgt_alpha, act_alpha))
+
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, *args, **kargs):
+        weight = state_dict[prefix + "weight"]
+        #print(weight)
+        shift = weight.abs().log() / math.log(2)
+        sign = weight.sign()
+
+        self.shift.data = shift
+        self.sign.data = sign
+        #state_dict[prefix + "shift"] = shift
+        #state_dict[prefix + "sign"] = sign
+        return super(ShiftConv2d, self)._load_from_state_dict(state_dict, prefix, local_metadata, True, *args, **kargs)
 
 
 # 8-bit quantization for the first and the last layer
