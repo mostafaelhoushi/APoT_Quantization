@@ -6,6 +6,7 @@ from torch.nn import init
 from torch.nn.parameter import Parameter
 
 import math
+import models.ste as ste
 
 # this function construct an additive pot quantization levels set, with clipping threshold = 1,
 def build_power_value(B=2, additive=True, gridnorm=True):
@@ -122,7 +123,7 @@ class weight_shift_fn(nn.Module):
         self.weightnorm = weightnorm
 
     def forward(self, shift, sign):
-        weight = 2**shift.round() * sign.round()
+        weight = 2**ste.round(shift) * ste.sign(ste.round(sign))
         if self.weightnorm:
             mean = weight.mean()
             std = weight.std()
@@ -240,7 +241,7 @@ class ShiftConv2d(nn.Module):
         self.reset_parameters()
 
     def forward(self, x): 
-        weight_q = 2**self.shift.round() * self.sign.round().sign()  # self.weight_quant(self.shift, self.sign)
+        weight_q = ste.unsym_grad_mul(2**ste.round(self.shift), ste.sign(ste.round(self.sign)) ) #self.weight_quant(self.shift, self.sign)
         x = self.act_alq(x, self.act_alpha)
         return F.conv2d(x, weight_q, self.bias, self.stride,
                         self.padding, self.dilation, self.groups)
