@@ -123,7 +123,7 @@ class weight_shift_fn(nn.Module):
         self.weightnorm = weightnorm
 
     def forward(self, shift, sign):
-        weight = 2**ste.round(shift) * ste.sign(ste.round(sign))
+        weight = ste.unsym_grad_mul(2**ste.round(shift), ste.sign(ste.round(sign)))
         if self.weightnorm:
             mean = weight.mean()
             std = weight.std()
@@ -241,7 +241,7 @@ class ShiftConv2d(nn.Module):
         self.reset_parameters()
 
     def forward(self, x): 
-        weight_q = ste.unsym_grad_mul(2**ste.round(self.shift), ste.sign(ste.round(self.sign)) ) #self.weight_quant(self.shift, self.sign)
+        weight_q = self.weight_quant(self.shift, self.sign) # ste.unsym_grad_mul(2**ste.round(self.shift), ste.sign(ste.round(self.sign)) )
         x = self.act_alq(x, self.act_alpha)
         return F.conv2d(x, weight_q, self.bias, self.stride,
                         self.padding, self.dilation, self.groups)
