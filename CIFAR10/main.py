@@ -18,6 +18,7 @@ import torchvision
 import torchvision.transforms as transforms
 
 import bnutils
+import models.utils
 
 from models import *
 
@@ -89,9 +90,11 @@ def main():
         model_params = []
         for name, params in model.module.named_parameters():
             if 'act_alpha' in name:
-                model_params += [{'params': [params], 'lr': 1e-1, 'weight_decay': 1e-4}]
+                model_params += [{'params': [params], 'lr': 1e-1, 'weight_decay': 1e-4 if args.train_alpha else 0}]
             elif 'wgt_alpha' in name:
-                model_params += [{'params': [params], 'lr': 2e-2, 'weight_decay': 1e-4}]
+                model_params += [{'params': [params], 'lr': 2e-2, 'weight_decay': 1e-4 if args.train_alpha else 0}]
+            elif name.endswith(".shift") or name.endswith(".sign"):
+                model_params += [{'params': [params], 'lr': args.lr, 'weight_decay': 0}]
             else:
                 model_params += [{'params': [params]}]
         optimizer = torch.optim.SGD(model_params, lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
@@ -243,6 +246,8 @@ def train(trainloader, model, criterion, optimizer, epoch):
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
+        if(args.weight_decay > 0):
+            loss += utils.shift_l2_norm(optimizer, args.weight_decay)
         if args.no_backward_pass is False:
             loss.backward()
             optimizer.step()

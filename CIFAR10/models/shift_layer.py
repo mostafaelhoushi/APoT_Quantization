@@ -57,6 +57,15 @@ def build_power_value(B=2, additive=True, gridnorm=True):
         values = values.mul(1.0 / torch.max(values))
     return values
 
+def build_shift_value(B=2):
+    values = [0.]
+
+    for i in range(2 ** B - 1):
+        values.append((-i - 1))
+
+    values = torch.Tensor(list(set(values)))
+    return values
+
 
 def weight_quantization(b, grids, train_alpha=True, gridnorm=True):
 

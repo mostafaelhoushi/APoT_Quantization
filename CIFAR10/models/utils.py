@@ -35,3 +35,10 @@ def round(x, rounding='deterministic'):
         return x_floor + torch.bernoulli(x - x_floor)
     else:
         return x.round()
+
+def shift_l2_norm(opt, weight_decay):
+    shift_params = opt.param_groups[2]['params']
+    l2_norm = 0
+    for shift in shift_params:
+        l2_norm += torch.sum((2**shift)**2)
+    return weight_decay * 0.5 * l2_norm
