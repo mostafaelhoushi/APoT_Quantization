@@ -116,6 +116,37 @@ def weight_quantization(b, grids, train_alpha=True, gridnorm=True):
 
     return _pq().apply
 
+def shift_quantization(b, grids, train_alpha=True, gridnorm=True):
+
+    def uniform_quant(x, b):
+        xdiv = x.mul((2 ** b - 1))
+        xhard = xdiv.round().div(2 ** b - 1)
+        return xhard
+
+    def grid_quant(x, value_s):
+        shape = x.shape
+        xhard = x.view(-1)
+        value_s = value_s.type_as(x)
+        idxs = (xhard.unsqueeze(0) - value_s.unsqueeze(1)).abs().min(dim=0)[1]  # project to nearest quantization level
+        xhard = value_s[idxs].view(shape)
+        # xout = (xhard - x).detach() + x
+        return xhard
+
+    class _pq(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, input):
+            input_q = grid_quant(input, grids)
+            ctx.save_for_backward(input, input_q)
+            return input_q
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            grad_input = grad_output.clone()             # grad for weights will not be clipped
+            input, input_q = ctx.saved_tensors
+            return grad_input
+
+    return _pq().apply
+
 
 class weight_shift_fn(nn.Module):
     def __init__(self, w_bit, power=True, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0):
@@ -123,8 +154,11 @@ class weight_shift_fn(nn.Module):
         assert (w_bit <=5 and w_bit > 0) or w_bit == 32
         self.w_bit = w_bit-1
         self.power = power if w_bit>2 else False
-        self.grids = build_power_value(self.w_bit, additive=additive, gridnorm=gridnorm)
-        self.weight_q = weight_quantization(b=self.w_bit, grids=self.grids, train_alpha=train_alpha, gridnorm=gridnorm)
+        # self.grids = build_power_value(self.w_bit, additive=additive, gridnorm=gridnorm)
+        # self.weight_q = weight_quantization(b=self.w_bit, grids=self.grids, train_alpha=train_alpha, gridnorm=gridnorm)
+        self.shift_grids = build_shift_value(self.w_bit)
+        self.shift_q = shift_quantization(b=self.w_bit, grids=self.shift_grids)
+
         if train_alpha:
             self.register_parameter('wgt_alpha', Parameter(torch.tensor(wgt_alpha_init)))
         else:
@@ -132,12 +166,13 @@ class weight_shift_fn(nn.Module):
         self.weightnorm = weightnorm
 
     def forward(self, shift, sign):
-        weight = ste.unsym_grad_mul(2**ste.round(shift), ste.sign(ste.round(sign)))
+        shift_rounded = self.shift_q(shift)
+        weight = ste.unsym_grad_mul(2**shift_rounded, ste.sign(ste.round(sign)))
         if self.weightnorm:
             mean = weight.mean()
             std = weight.std()
             weight = weight.add(-mean).div(std)      # weights normalization
-        weight_q = self.weight_q(weight, self.wgt_alpha)
+        weight_q = weight # self.weight_q(weight, self.wgt_alpha)
         return weight_q
 
 
