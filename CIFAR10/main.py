@@ -19,7 +19,7 @@ import torchvision.transforms as transforms
 
 import bnutils
 import models.utils
-
+import optim
 from models import *
 
 parser = argparse.ArgumentParser(description='PyTorch Cifar10 Training')
@@ -27,7 +27,9 @@ parser.add_argument('--epochs', default=300, type=int, metavar='N', help='number
 parser.add_argument('-a', '--arch', metavar='ARCH', default='res20')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N', help='manual epoch number (useful on restarts)')
 parser.add_argument('-b', '--batch-size', default=128, type=int, metavar='N', help='mini-batch size (default: 128),only used for train')
+parser.add_argument('-opt', '--optimizer', metavar='OPT', default="SGD", help='optimizer algorithm')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float, metavar='LR', help='initial learning rate')
+parser.add_argument('--lr-schedule', nargs='+', default=[150, 225], help='Epochs to update learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M', help='momentum')
 parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float, metavar='W', help='weight decay (default: 1e-4)')
 parser.add_argument('--print-freq', '-p', default=100, type=int, metavar='N', help='print frequency (default: 10)')
@@ -97,7 +99,7 @@ def main():
                 model_params += [{'params': [params], 'lr': args.lr, 'weight_decay': 0}]
             else:
                 model_params += [{'params': [params]}]
-        optimizer = torch.optim.SGD(model_params, lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+        optimizer = optim.optim(args.optimizer, model_params, lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
         cudnn.benchmark = True
     else:
         print('Cuda is not available!')
@@ -170,7 +172,7 @@ def main():
     writer = SummaryWriter(comment=fdir.replace(args.result_dir, ''))
 
     for epoch in range(args.start_epoch, args.epochs):
-        adjust_learning_rate(optimizer, epoch)
+        adjust_learning_rate(optimizer, epoch, args.lr_schedule)
 
         # train for one epoch
         # model.module.record_weight(writer, epoch)
@@ -342,9 +344,8 @@ def log_csv(epoch, train_log, val_log, result_dir):
         csv_log = csv.writer(csv_file)
         csv_log.writerow(((epoch,) + tuple(train_log.values()) + tuple(val_log.values())))
 
-def adjust_learning_rate(optimizer, epoch):
+def adjust_learning_rate(optimizer, epoch, adjust_list = [150, 225]):
     """For resnet, the lr starts from 0.1, and is divided by 10 at 80 and 120 epochs"""
-    adjust_list = [150, 225]
     if epoch in adjust_list:
         for param_group in optimizer.param_groups:
             param_group['lr'] = param_group['lr'] * 0.1
