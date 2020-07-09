@@ -5,6 +5,7 @@ import shutil
 import distutils
 from contextlib import redirect_stdout
 import csv
+import math
 
 import torch
 import torch.nn as nn
@@ -46,6 +47,7 @@ parser.add_argument('--act-alpha-init', default=8.0, help='initial clipping for 
 parser.add_argument('--gridnorm', default=True, type=lambda x:bool(distutils.util.strtobool(x)), help='normalize the possible quantization values')
 parser.add_argument('-wn', '--weightnorm', default=True, type=lambda x:bool(distutils.util.strtobool(x)), help='normalize weights')
 parser.add_argument('-s', '--shift', default=False, type=lambda x:bool(distutils.util.strtobool(x)), help='use PS method')
+parser.add_argument('--base', default=2, help='weights and activations are quantized to powers of this base (default:2 )')
 
 parser.add_argument('--freeze-weights', dest='freeze_weights', action='store_true', help='freeze weights of conv and linear layers')
 parser.add_argument('--freeze-biases', dest='freeze_biases', action='store_true', help='freeze biases of convolution and fully-connected layers')
@@ -59,6 +61,9 @@ parser.add_argument('--print-weights', default=True, type=lambda x:bool(distutil
 
 best_prec = 0
 args = parser.parse_args()
+if args.base in ['sqrt2', 'root2']:
+    args.base = math.sqrt(2)
+args.base = float(args.base)
 
 def main():
 
@@ -70,9 +75,9 @@ def main():
     if use_gpu:
         float = True if args.bit == 32 else False
         if args.arch == 'res20':
-            model = resnet20_cifar(float=float, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm, shift=args.shift, gridnorm=args.gridnorm, wgt_alpha_init=args.wgt_alpha_init, act_alpha_init=args.act_alpha_init)
+            model = resnet20_cifar(float=float, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm, shift=args.shift, gridnorm=args.gridnorm, wgt_alpha_init=args.wgt_alpha_init, act_alpha_init=args.act_alpha_init, base=args.base)
         elif args.arch == 'res56':
-            model = resnet56_cifar(float=float, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm, shift=args.shift, gridnorm=args.gridnorm, wgt_alpha_init=args.wgt_alpha_init, act_alpha_init=args.act_alpha_init)
+            model = resnet56_cifar(float=float, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm, shift=args.shift, gridnorm=args.gridnorm, wgt_alpha_init=args.wgt_alpha_init, act_alpha_init=args.act_alpha_init, base=args.base)
         else:
             print('Architecture not support!')
             return
@@ -80,11 +85,11 @@ def main():
             for m in model.modules():
                 if isinstance(m, QuantConv2d):
                     m.weight_quant = weight_quantize_fn(w_bit=args.bit, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm)
-                    m.act_grid = build_power_value(args.bit, additive=args.additive)
+                    m.act_grid = build_power_value(args.bit, additive=args.additive, base=args.base)
                     m.act_alq = act_quantization(args.bit, m.act_grid, train_alpha=args.train_alpha)
                 if isinstance(m, ShiftConv2d):
-                    m.weight_quant = weight_shift_fn(w_bit=args.bit, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm)
-                    m.act_grid = build_power_value(args.bit, additive=args.additive)
+                    m.weight_quant = weight_shift_fn(w_bit=args.bit, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm, base=args.base)
+                    m.act_grid = build_power_value(args.bit, additive=args.additive, base=args.base)
                     m.act_alq = act_quantization(args.bit, m.act_grid, train_alpha=args.train_alpha)
 
         model = nn.DataParallel(model).cuda()

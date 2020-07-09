@@ -9,44 +9,44 @@ import math
 import models.ste as ste
 
 # this function construct an additive pot quantization levels set, with clipping threshold = 1,
-def build_power_value(B=2, additive=True, gridnorm=True):
+def build_power_value(B=2, additive=True, gridnorm=True, base=2):
     base_a = [0.]
     base_b = [0.]
     base_c = [0.]
     if additive:
         if B == 2:
             for i in range(3):
-                base_a.append(2 ** (-i - 1))
+                base_a.append(base ** (-i - 1))
         elif B == 4:
             for i in range(3):
-                base_a.append(2 ** (-2 * i - 1))
-                base_b.append(2 ** (-2 * i - 2))
+                base_a.append(base ** (-2 * i - 1))
+                base_b.append(base ** (-2 * i - 2))
         elif B == 6:
             for i in range(3):
-                base_a.append(2 ** (-3 * i - 1))
-                base_b.append(2 ** (-3 * i - 2))
-                base_c.append(2 ** (-3 * i - 3))
+                base_a.append(base ** (-3 * i - 1))
+                base_b.append(base ** (-3 * i - 2))
+                base_c.append(base ** (-3 * i - 3))
         elif B == 3:
             for i in range(3):
                 if i < 2:
-                    base_a.append(2 ** (-i - 1))
+                    base_a.append(base ** (-i - 1))
                 else:
-                    base_b.append(2 ** (-i - 1))
-                    base_a.append(2 ** (-i - 2))
+                    base_b.append(base ** (-i - 1))
+                    base_a.append(base ** (-i - 2))
         elif B == 5:
             for i in range(3):
                 if i < 2:
-                    base_a.append(2 ** (-2 * i - 1))
-                    base_b.append(2 ** (-2 * i - 2))
+                    base_a.append(base ** (-2 * i - 1))
+                    base_b.append(base ** (-2 * i - 2))
                 else:
-                    base_c.append(2 ** (-2 * i - 1))
-                    base_a.append(2 ** (-2 * i - 2))
-                    base_b.append(2 ** (-2 * i - 3))
+                    base_c.append(base ** (-2 * i - 1))
+                    base_a.append(base ** (-2 * i - 2))
+                    base_b.append(base ** (-2 * i - 3))
         else:
             pass
     else:
         for i in range(2 ** B - 1):
-            base_a.append(2 ** (-i - 1))
+            base_a.append(base ** (-i - 1))
     values = []
     for a in base_a:
         for b in base_b:
@@ -66,55 +66,6 @@ def build_shift_value(B=2):
     values = torch.Tensor(list(set(values)))
     return values
 
-
-def weight_quantization(b, grids, train_alpha=True, gridnorm=True):
-
-    def uniform_quant(x, b):
-        xdiv = x.mul((2 ** b - 1))
-        xhard = xdiv.round().div(2 ** b - 1)
-        return xhard
-
-    def power_quant(x, value_s):
-        shape = x.shape
-        xhard = x.view(-1)
-        value_s = value_s.type_as(x)
-        idxs = (xhard.unsqueeze(0) - value_s.unsqueeze(1)).abs().min(dim=0)[1]  # project to nearest quantization level
-        xhard = value_s[idxs].view(shape)
-        # xout = (xhard - x).detach() + x
-        return xhard
-
-    class _pq(torch.autograd.Function):
-        @staticmethod
-        def forward(ctx, input, alpha):
-            if gridnorm:
-                input.div_(alpha)                           # weights are first divided by alpha
-                input_c = input.clamp(min=-1, max=+1)       # then clipped to [-1,1]
-            else:
-                input_c = input.clamp(min=-alpha.item(), max=alpha.item())
-            sign = input_c.sign()
-            input_abs = input_c.abs()
-            input_q = power_quant(input_abs, grids).mul(sign)  # project to Q^a(alpha, B)
-            ctx.save_for_backward(input, input_q, alpha)
-            if gridnorm:
-                input_q = input_q.mul(alpha)               # rescale to the original range
-            return input_q
-
-        @staticmethod
-        def backward(ctx, grad_output):
-            grad_input = grad_output.clone()             # grad for weights will not be clipped
-            input, input_q, alpha = ctx.saved_tensors
-            if gridnorm:
-                i = (input.abs()>1.0).float()
-            else:
-                i = (input.abs()>alpha.item()).float()
-            sign = input.sign()
-            if train_alpha:
-                grad_alpha = (grad_output*(sign*i + (input_q-input)*(1-i))).sum()
-            else:
-                grad_alpha = None
-            return grad_input, grad_alpha
-
-    return _pq().apply
 
 def shift_quantization(b, grids, train_alpha=True, gridnorm=True):
 
@@ -149,12 +100,13 @@ def shift_quantization(b, grids, train_alpha=True, gridnorm=True):
 
 
 class weight_shift_fn(nn.Module):
-    def __init__(self, w_bit, power=True, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0):
+    def __init__(self, w_bit, power=True, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0, base=2):
         super(weight_shift_fn, self).__init__()
         assert (w_bit <=5 and w_bit > 0) or w_bit == 32
         self.w_bit = w_bit-1
+        self.base = base
         self.power = power if w_bit>2 else False
-        # self.grids = build_power_value(self.w_bit, additive=additive, gridnorm=gridnorm)
+        # self.grids = build_power_value(self.w_bit, additive=additive, gridnorm=gridnorm, base=self.base)
         # self.weight_q = weight_quantization(b=self.w_bit, grids=self.grids, train_alpha=train_alpha, gridnorm=gridnorm)
         self.shift_grids = build_shift_value(self.w_bit)
         self.shift_q = shift_quantization(b=self.w_bit, grids=self.shift_grids)
@@ -167,7 +119,7 @@ class weight_shift_fn(nn.Module):
 
     def forward(self, shift, sign):
         shift_rounded = self.shift_q(shift)
-        weight = ste.unsym_grad_mul(2**shift_rounded, ste.sign(ste.round(sign)))
+        weight = ste.unsym_grad_mul(self.base**shift_rounded, ste.sign(ste.round(sign)))
         if self.weightnorm:
             mean = weight.mean()
             std = weight.std()
@@ -230,7 +182,7 @@ class ShiftConv2d(nn.Module):
     __constants__ = ['stride', 'padding', 'dilation', 'groups', 'bias', 'padding_mode']
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, padding_mode='zeros',
-                       additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0):
+                       additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0, base=2):
         super(ShiftConv2d, self).__init__()
         if in_channels % groups != 0:
             raise ValueError('in_channels must be divisible by groups')
@@ -255,13 +207,13 @@ class ShiftConv2d(nn.Module):
         self.groups = groups
         self.padding_mode = padding_mode
 
-
         self.layer_type = 'ShiftConv2d'
+        self.base = base
         self.bit = 4
         # TODO: remove redundancy as variables similar weight_shift_range is calculated in other functions in the code
-        self.weight_shift_range = (-1 * (2**(self.bit - 1) - 1 -1), 0) # we use ternary weights to represent sign
+        self.weight_shift_range = (-1 * (self.base**(self.bit - 1) - 1 -1), 0) # we use ternary weights to represent sign
         self.weight_quant = weight_shift_fn(w_bit=self.bit, power=True, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init)
-        self.act_grid = build_power_value(self.bit, additive=additive, gridnorm=gridnorm)
+        self.act_grid = build_power_value(self.bit, additive=additive, gridnorm=gridnorm, base=self.base)
         self.act_alq = act_quantization(self.bit, self.act_grid, power=True, train_alpha=train_alpha, gridnorm=gridnorm)
         if train_alpha:
             self.act_alpha = torch.nn.Parameter(torch.tensor(act_alpha_init))
@@ -285,7 +237,7 @@ class ShiftConv2d(nn.Module):
         self.reset_parameters()
 
     def forward(self, x): 
-        weight_q = self.weight_quant(self.shift, self.sign) # ste.unsym_grad_mul(2**ste.round(self.shift), ste.sign(ste.round(self.sign)) )
+        weight_q = self.weight_quant(self.shift, self.sign) # ste.unsym_grad_mul(self.base**ste.round(self.shift), ste.sign(ste.round(self.sign)) )
         x = self.act_alq(x, self.act_alpha)
         return F.conv2d(x, weight_q, self.bias, self.stride,
                         self.padding, self.dilation, self.groups)
@@ -319,15 +271,13 @@ class ShiftConv2d(nn.Module):
         print('clipping threshold weight alpha: {:2f}, activation alpha: {:2f}'.format(wgt_alpha, act_alpha))
 
     def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, *args, **kargs):
-        weight = state_dict[prefix + "weight"]
-        #print(weight)
-        shift = weight.abs().log() / math.log(2)
-        sign = weight.sign()
+        if str(prefix + "weight") in state_dict:
+            weight = state_dict[prefix + "weight"]
+            shift = weight.abs().log() / math.log(self.base)
+            sign = weight.sign()
 
-        self.shift.data = shift
-        self.sign.data = sign
-        #state_dict[prefix + "shift"] = shift
-        #state_dict[prefix + "sign"] = sign
+            self.shift.data = shift
+            self.sign.data = sign
         return super(ShiftConv2d, self)._load_from_state_dict(state_dict, prefix, local_metadata, True, *args, **kargs)
 
 
