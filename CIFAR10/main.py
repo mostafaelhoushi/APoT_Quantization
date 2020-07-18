@@ -354,6 +354,7 @@ def adjust_learning_rate(optimizer, epoch, adjust_list = [150, 225]):
     if epoch in adjust_list:
         for param_group in optimizer.param_groups:
             param_group['lr'] = param_group['lr'] * 0.1
+            print("lr: ", param_group['lr'])
 
 
 def accuracy(output, target, topk=(1,)):
