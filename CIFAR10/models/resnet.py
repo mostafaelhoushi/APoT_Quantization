@@ -157,7 +157,7 @@ class ResNet_Cifar(nn.Module):
 
     def show_params(self):
         for m in self.modules():
-            if isinstance(m, QuantConv2d):
+            if isinstance(m, QuantConv2d) or isinstance(m, ShiftConv2d):
                 m.show_params()
 
 
