@@ -9,7 +9,13 @@ import torch
 import torch.nn as nn
 import math
 from models.quant_layer import *
-from models.shift_layer import ShiftConv2d
+
+import os, sys
+currentdir = os.path.dirname(os.path.abspath(__file__))
+parentdir = os.path.dirname(currentdir)
+grandparentdir = os.path.dirname(parentdir)
+sys.path.insert(0,grandparentdir) 
+from shift.shift_layer import ShiftConv2d
 
 
 def conv3x3(in_planes, out_planes, stride=1):

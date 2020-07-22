@@ -1,6 +1,6 @@
 import torch
 from torch.autograd import Function
-import models.utils as utils
+from . import utils
 
 class RoundPowerOf2(Function):
     @staticmethod 

@@ -5,44 +5,44 @@ from torch.nn.parameter import Parameter
 
 
 # this function construct an additive pot quantization levels set, with clipping threshold = 1,
-def build_power_value(B=2, additive=True, gridnorm=True):
+def build_power_value(B=2, additive=True, gridnorm=True, base=2):
     base_a = [0.]
     base_b = [0.]
     base_c = [0.]
     if additive:
         if B == 2:
             for i in range(3):
-                base_a.append(2 ** (-i - 1))
+                base_a.append(base ** (-i - 1))
         elif B == 4:
             for i in range(3):
-                base_a.append(2 ** (-2 * i - 1))
-                base_b.append(2 ** (-2 * i - 2))
+                base_a.append(base ** (-2 * i - 1))
+                base_b.append(base ** (-2 * i - 2))
         elif B == 6:
             for i in range(3):
-                base_a.append(2 ** (-3 * i - 1))
-                base_b.append(2 ** (-3 * i - 2))
-                base_c.append(2 ** (-3 * i - 3))
+                base_a.append(base ** (-3 * i - 1))
+                base_b.append(base ** (-3 * i - 2))
+                base_c.append(base ** (-3 * i - 3))
         elif B == 3:
             for i in range(3):
                 if i < 2:
-                    base_a.append(2 ** (-i - 1))
+                    base_a.append(base ** (-i - 1))
                 else:
-                    base_b.append(2 ** (-i - 1))
-                    base_a.append(2 ** (-i - 2))
+                    base_b.append(base ** (-i - 1))
+                    base_a.append(base ** (-i - 2))
         elif B == 5:
             for i in range(3):
                 if i < 2:
-                    base_a.append(2 ** (-2 * i - 1))
-                    base_b.append(2 ** (-2 * i - 2))
+                    base_a.append(base ** (-2 * i - 1))
+                    base_b.append(base ** (-2 * i - 2))
                 else:
-                    base_c.append(2 ** (-2 * i - 1))
-                    base_a.append(2 ** (-2 * i - 2))
-                    base_b.append(2 ** (-2 * i - 3))
+                    base_c.append(base ** (-2 * i - 1))
+                    base_a.append(base ** (-2 * i - 2))
+                    base_b.append(base ** (-2 * i - 3))
         else:
             pass
     else:
         for i in range(2 ** B - 1):
-            base_a.append(2 ** (-i - 1))
+            base_a.append(base ** (-i - 1))
     values = []
     for a in base_a:
         for b in base_b:
@@ -108,12 +108,13 @@ def weight_quantization(b, grids, power=True, train_alpha=True, gridnorm=True):
 
 
 class weight_quantize_fn(nn.Module):
-    def __init__(self, w_bit, power=True, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0):
+    def __init__(self, w_bit, power=True, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0, base=2):
         super(weight_quantize_fn, self).__init__()
         assert (w_bit <=5 and w_bit > 0) or w_bit == 32
         self.w_bit = w_bit-1
+        self.base = base
         self.power = power if w_bit>2 else False
-        self.grids = build_power_value(self.w_bit, additive=additive, gridnorm=gridnorm)
+        self.grids = build_power_value(self.w_bit, additive=additive, gridnorm=gridnorm, base=self.base)
         self.weight_q = weight_quantization(b=self.w_bit, grids=self.grids, power=self.power, train_alpha=train_alpha, gridnorm=gridnorm)
         if train_alpha:
             self.register_parameter('wgt_alpha', Parameter(torch.tensor(wgt_alpha_init)))
@@ -184,13 +185,14 @@ def act_quantization(b, grid, power=True, train_alpha=True, gridnorm=True):
 
 
 class QuantConv2d(nn.Conv2d):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0, base=2):
         super(QuantConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups,
                                           bias)
         self.layer_type = 'QuantConv2d'
+        self.base = base
         self.bit = 4
         self.weight_quant = weight_quantize_fn(w_bit=self.bit, power=True, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init)
-        self.act_grid = build_power_value(self.bit, additive=additive, gridnorm=gridnorm)
+        self.act_grid = build_power_value(self.bit, additive=additive, gridnorm=gridnorm, base=self.base)
         self.act_alq = act_quantization(self.bit, self.act_grid, power=True, train_alpha=train_alpha, gridnorm=gridnorm)
         if train_alpha:
             self.act_alpha = torch.nn.Parameter(torch.tensor(act_alpha_init))

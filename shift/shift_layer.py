@@ -6,7 +6,7 @@ from torch.nn import init
 from torch.nn.parameter import Parameter
 
 import math
-import models.ste as ste
+from . import ste 
 
 # this function construct an additive pot quantization levels set, with clipping threshold = 1,
 def build_power_value(B=2, additive=True, gridnorm=True, base=2):

@@ -2,7 +2,7 @@ import argparse
 import os
 import time
 import shutil
-import distutils
+import distutils, distutils.util
 from contextlib import redirect_stdout
 import csv
 import math
@@ -18,8 +18,14 @@ from tensorboardX import SummaryWriter
 import torchvision
 import torchvision.transforms as transforms
 
+import os, sys
+currentdir = os.path.dirname(os.path.abspath(__file__))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0,parentdir) 
+
 import bnutils
-import models.utils
+import shift.utils as utils
+from shift.shift_layer import *
 import optim
 from models import *
 
