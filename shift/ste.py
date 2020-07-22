@@ -57,10 +57,6 @@ class ClampFunction(Function):
 
     @staticmethod 
     def backward(ctx, grad_output):
-        #print("\tback")
-        if(torch.isnan(grad_output.unique()).any()):
-            #print("grad_output has nan")
-            pass #exit()
         return grad_output, None, None
 
 def clamp(input, min, max):

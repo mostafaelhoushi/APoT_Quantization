@@ -183,7 +183,7 @@ class ShiftConv2d(nn.Module):
     __constants__ = ['stride', 'padding', 'dilation', 'groups', 'bias', 'padding_mode']
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, padding_mode='zeros',
-                       additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0, base=2):
+                       bit=5, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0, base=2):
         super(ShiftConv2d, self).__init__()
         if in_channels % groups != 0:
             raise ValueError('in_channels must be divisible by groups')
@@ -210,7 +210,7 @@ class ShiftConv2d(nn.Module):
 
         self.layer_type = 'ShiftConv2d'
         self.base = base
-        self.bit = 4
+        self.bit = bit
         # TODO: remove redundancy as variables similar weight_shift_range is calculated in other functions in the code
         self.weight_shift_range = (-1 * (self.base**(self.bit - 1) - 1 -1), 0) # we use ternary weights to represent sign
         self.weight_quant = weight_shift_fn(w_bit=self.bit, power=True, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init)

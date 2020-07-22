@@ -26,9 +26,9 @@ def conv3x3(in_planes, out_planes, stride=1):
 def Quantconv3x3(in_planes, out_planes, stride=1, additive=True, train_alpha=True, weightnorm=True, shift=False, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0, base=2):
     " 3x3 quantized convolution with padding "
     if shift:
-        return ShiftConv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=True, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init, base=base)
+        return ShiftConv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init, base=base)
     else:
-        return QuantConv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=True, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init, base=base)
+        return QuantConv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init, base=base)
 
 
 class BasicBlock(nn.Module):

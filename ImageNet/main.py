@@ -10,6 +10,9 @@ import shutil
 import time
 import warnings
 import distutils.util
+from contextlib import redirect_stdout
+import csv
+import math
 
 import torch
 import torch.nn as nn
@@ -88,8 +91,18 @@ parser.add_argument('--additive', default=True, type=lambda x:bool(distutils.uti
                     help='use additive powers of two')
 parser.add_argument('--train-alpha', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
                     help='make alpha trainable')
+parser.add_argument('--wgt-alpha-init', default=3.0, 
+                    help='initial clipping for weights')
+parser.add_argument('--act-alpha-init', default=8.0, 
+                    help='initial clipping for activations')
+parser.add_argument('--gridnorm', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
+                    help='normalize the possible quantization values')
 parser.add_argument('-wn', '--weightnorm', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
                     help='normalize weights')
+parser.add_argument('-s', '--shift', default=False, type=lambda x:bool(distutils.util.strtobool(x)), 
+                    help='use PS method')
+parser.add_argument('--base', default=2, 
+                    help='weights and activations are quantized to powers of this base (default:2 )')
 
 parser.add_argument('--freeze-weights', dest='freeze_weights', action='store_true', 
                     help='freeze weights of conv and linear layers')
@@ -115,6 +128,9 @@ best_acc1 = 0
 
 def main():
     args = parser.parse_args()
+    if args.base in ['sqrt2', 'root2']:
+        args.base = math.sqrt(2)
+    args.base = float(args.base)
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -166,7 +182,7 @@ def main_worker(gpu, ngpus_per_node, args):
                                 world_size=args.world_size, rank=args.rank)
     # create model
     print("=> creating model '{}'".format(args.arch))
-    model = models.__dict__[args.arch](pretrained=True, bit=args.bit, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm)
+    model = models.__dict__[args.arch](pretrained=True, bit=args.bit, additive=args.additive, train_alpha=args.train_alpha, weightnorm=args.weightnorm, shift=args.shift, gridnorm=args.gridnorm, wgt_alpha_init=args.wgt_alpha_init, act_alpha_init=args.act_alpha_init, base=args.base)
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -286,6 +302,24 @@ def main_worker(gpu, ngpus_per_node, args):
         ])),
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
+
+    if args.update_mean_var:
+        model = bnutils.update_mean_var(model, trainloader)
+
+    if not os.path.exists(args.result_dir):
+        os.makedirs(args.result_dir)
+    fdir = args.result_dir+'/'+str(args.arch)+'_'+str(args.bit)+'bit'
+    if not os.path.exists(fdir):
+        os.makedirs(fdir)
+
+    # Log model architecture and command arguments
+    with open(os.path.join(args.result_dir, 'command_args.txt'), 'w') as command_args_file:
+        for arg, value in sorted(vars(args).items()):
+            command_args_file.write(arg + ": " + str(value) + "\n")
+
+    with open(os.path.join(args.result_dir, 'model.txt'), 'w') as model_txt_file:
+        with redirect_stdout(model_txt_file):
+            print(model)
     # --------------------------------------------------------------------------
     if args.evaluate:
         validate(val_loader, model, criterion, args)
@@ -298,16 +332,22 @@ def main_worker(gpu, ngpus_per_node, args):
         # adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args, writer)
+        train_log = train(train_loader, model, criterion, optimizer, epoch, args, writer)
 
         # evaluate on validation set
-        acc1 = validate(val_loader, model, criterion, args)
+        val_log = validate(val_loader, model, criterion, args)
+        acc1 = val_log['val_acc1']
         scheduler.step()
         writer.add_scalar('test_acc', acc1, epoch)
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
         print('best_acc:' + str(best_acc1))
+
+        if (args.print_weights):
+            log_weights(model.state_dict(), epoch, args.result_dir)   
+
+        log_csv(epoch, train_log, val_log, args.result_dir)
 
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                                                     and args.rank % ngpus_per_node == 0):
@@ -317,7 +357,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 'state_dict': model.state_dict(),
                 'best_acc1': best_acc1,
                 'optimizer': optimizer.state_dict(),
-            }, is_best)
+            }, is_best, args.result_dir)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args, writer):
@@ -371,6 +411,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args, writer):
         gc.collect()
     writer.add_scalar('train_acc', top1.avg, epoch)
 
+    return {"train_losses": losses.avg, "train_acc1": top1.avg, "train_acc5": top5.avg, "train_batch_time": batch_time.avg, "train_data_time": data_time.avg, "train_epoch_time": batch_time.sum}
+
 
 def validate(val_loader, model, criterion, args):
     batch_time = AverageMeter('Time', ':6.3f')
@@ -414,14 +456,42 @@ def validate(val_loader, model, criterion, args):
               .format(top1=top1, top5=top5))
     model.module.show_params()
 
-    return top1.avg
+    return {"val_losses": losses.avg, "val_acc1": top1.avg, "val_acc5": top5.avg, "val_batch_time": batch_time.avg, "val_epoch_time": batch_time.sum}
 
 
-def save_checkpoint(state, is_best, filename='checkpoints.pth.tar'):
-    torch.save(state, filename)
+def save_checkpoint(state, is_best, fdir):
+    filepath = os.path.join(fdir, 'checkpoint.pth')
+    torch.save(state, filepath)
     if is_best:
-        shutil.copyfile(filename, 'res18_4best.pth.tar')
+        shutil.copyfile(filepath, os.path.join(fdir, 'model_best.pth.tar'))
+        
+    if (state['epoch']-1)%10 == 0:
+        os.makedirs(os.path.join(fdir, 'checkpoints'), exist_ok=True)
+        shutil.copyfile(filepath, os.path.join(fdir, 'checkpoints', 'checkpoint_' + str(state['epoch']-1) + '.pth.tar'))  
 
+def log_weights(state_dict, epoch, result_dir):
+    os.makedirs(os.path.join(result_dir, 'weights_logs'), exist_ok=True)
+    with open(os.path.join(result_dir, 'weights_logs', 'weights_log_' + str(epoch) + '.txt'), 'w') as weights_log_file:
+        with redirect_stdout(weights_log_file):
+            # Log model's state_dict
+            print("Model's state_dict:")
+            # TODO: Use checkpoint above
+            for param_tensor in state_dict:
+                print(param_tensor, "\t", state_dict[param_tensor].size())
+                print(state_dict[param_tensor])
+                print("") 
+
+def log_csv(epoch, train_log, val_log, result_dir):
+    csv_filename = os.path.join(result_dir, 'train_log.csv')
+
+    if os.path.isfile(csv_filename) is False:
+        with open(csv_filename, "w") as csv_file:
+            csv_log = csv.writer(csv_file)
+            csv_log.writerow((('epoch',) + tuple(train_log.keys()) + tuple(val_log.keys())))
+
+    with open(csv_filename, "a") as csv_file:
+        csv_log = csv.writer(csv_file)
+        csv_log.writerow(((epoch,) + tuple(train_log.values()) + tuple(val_log.values())))
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
