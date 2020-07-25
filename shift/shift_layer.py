@@ -58,7 +58,7 @@ def build_power_value(B=2, additive=True, gridnorm=True, base=2):
     return values
 
 def build_shift_value(B=2):
-    values = [0.]
+    values = []
 
     for i in range(2 ** B - 1):
         values.append((-i - 1))
