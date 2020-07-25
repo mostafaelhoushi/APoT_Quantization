@@ -127,7 +127,6 @@ class ResNet_Cifar(nn.Module):
                 m.bias.data.zero_()
 
     def _make_layer(self, block, planes, blocks, stride=1, float=False, shift=False, **kwargs):
-        print("shift: ", shift)
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
