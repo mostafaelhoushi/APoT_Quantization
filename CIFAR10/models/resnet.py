@@ -106,15 +106,15 @@ class Bottleneck(nn.Module):
 
 class ResNet_Cifar(nn.Module):
 
-    def __init__(self, block, layers, num_classes=10, float=False, additive=True, train_alpha=True, weightnorm=True, shift=False, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0, base=2):
+    def __init__(self, block, layers, num_classes=10, float=False, **kwargs):
         super(ResNet_Cifar, self).__init__()
         self.inplanes = 16
         self.conv1 = first_conv(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(16)
         self.relu = nn.ReLU(inplace=True)
-        self.layer1 = self._make_layer(block, 16, layers[0], float=float, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, shift=shift, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init, base=base)
-        self.layer2 = self._make_layer(block, 32, layers[1], stride=2, float=float, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, shift=shift, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init, base=base)
-        self.layer3 = self._make_layer(block, 64, layers[2], stride=2, float=float, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, shift=shift, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init, base=base)
+        self.layer1 = self._make_layer(block, 16, layers[0], float=float, **kwargs)
+        self.layer2 = self._make_layer(block, 32, layers[1], stride=2, float=float, **kwargs)
+        self.layer3 = self._make_layer(block, 64, layers[2], stride=2, float=float, **kwargs)
         self.avgpool = nn.AvgPool2d(8, stride=1)
         self.fc = last_fc(64 * block.expansion, num_classes)
 
@@ -126,23 +126,24 @@ class ResNet_Cifar(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
-    def _make_layer(self, block, planes, blocks, stride=1, float=False, additive=True, train_alpha=True, weightnorm=True, shift=False, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0, base=2):
+    def _make_layer(self, block, planes, blocks, stride=1, float=False, shift=False, **kwargs):
+        print("shift: ", shift)
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
                 nn.Conv2d(self.inplanes, planes * block.expansion, kernel_size=1, stride=stride, bias=False)
                 if float is True else
-                (QuantConv2d(self.inplanes, planes * block.expansion, kernel_size=1, stride=stride, bias=False, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init)
+                (QuantConv2d(self.inplanes, planes * block.expansion, kernel_size=1, stride=stride, bias=False, **kwargs)
                 if shift is False else 
-                ShiftConv2d(self.inplanes, planes * block.expansion, kernel_size=1, stride=stride, bias=False, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init, base=base)),
+                ShiftConv2d(self.inplanes, planes * block.expansion, kernel_size=1, stride=stride, bias=False, **kwargs)),
                 nn.BatchNorm2d(planes * block.expansion)
             )
 
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, float=float, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, shift=shift, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init, base=base))
+        layers.append(block(self.inplanes, planes, stride, downsample, float=float, shift=shift, **kwargs))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, float=float, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, shift=shift, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init, base=base))
+            layers.append(block(self.inplanes, planes, float=float, shift=shift, **kwargs))
 
         return nn.Sequential(*layers)
 
