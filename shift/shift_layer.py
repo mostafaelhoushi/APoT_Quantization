@@ -85,22 +85,27 @@ def shift_quantization(b, grids, train_alpha=True, gridnorm=True):
 
     class _pq(torch.autograd.Function):
         @staticmethod
-        def forward(ctx, input):
-            input_q = grid_quant(input, grids)
-            ctx.save_for_backward(input, input_q)
+        def forward(ctx, input, alpha):
+            input_q = grid_quant(input + alpha, grids)
+            ctx.save_for_backward(input, input_q, alpha)
             return input_q
 
         @staticmethod
         def backward(ctx, grad_output):
-            grad_input = grad_output.clone()             # grad for weights will not be clipped
-            input, input_q = ctx.saved_tensors
-            return grad_input
+            input, input_q, alpha = ctx.saved_tensors
+            
+            i = (input.min() < alpha.item()).float() # try mean, max, 25th percentile
+
+            grad_input = grad_output.clone()             
+            grad_alpha = (grad_output*(i + (input_q-input)*(1-i))).sum() # try to do mathematical proof
+            
+            return grad_input, grad_alpha
 
     return _pq().apply
 
 
 class weight_shift_fn(nn.Module):
-    def __init__(self, w_bit, power=True, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0, base=2):
+    def __init__(self, w_bit, power=True, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=0.0, base=2):
         super(weight_shift_fn, self).__init__()
         assert (w_bit <=5 and w_bit > 0) or w_bit == 32
         self.w_bit = w_bit-1
@@ -118,7 +123,7 @@ class weight_shift_fn(nn.Module):
         self.weightnorm = weightnorm
 
     def forward(self, shift, sign):
-        shift_rounded = self.shift_q(shift)
+        shift_rounded = self.shift_q(shift, self.wgt_alpha)
         sign_rounded = ste.sign(ste.round(sign))
         weight = ste.unsym_grad_mul(self.base**shift_rounded, sign_rounded)
         if self.weightnorm:
@@ -183,7 +188,7 @@ class ShiftConv2d(nn.Module):
     __constants__ = ['stride', 'padding', 'dilation', 'groups', 'bias', 'padding_mode']
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, padding_mode='zeros',
-                       bit=5, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0, base=2):
+                       bit=5, additive=True, train_alpha=True, weightnorm=True, gridnorm=True, wgt_alpha_init=0.0, act_alpha_init=8.0, base=2):
         super(ShiftConv2d, self).__init__()
         if in_channels % groups != 0:
             raise ValueError('in_channels must be divisible by groups')
@@ -216,7 +221,7 @@ class ShiftConv2d(nn.Module):
         self.weight_quant = weight_shift_fn(w_bit=self.bit, power=True, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init)
         self.act_grid = build_power_value(self.bit, additive=additive, gridnorm=gridnorm, base=self.base)
         self.act_alq = act_quantization(self.bit, self.act_grid, power=True, train_alpha=train_alpha, gridnorm=gridnorm)
-        if train_alpha:
+        if False: #train_alpha:
             self.act_alpha = torch.nn.Parameter(torch.tensor(act_alpha_init))
         else:
             self.act_alpha = torch.tensor(act_alpha_init)
