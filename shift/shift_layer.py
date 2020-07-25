@@ -125,7 +125,7 @@ class weight_shift_fn(nn.Module):
             mean = weight.mean()
             std = weight.std()
             weight = weight.add(-mean).div(std)      # weights normalization
-        weight_q = weight # self.weight_q(weight, self.wgt_alpha)
+        weight_q = weight
         return weight_q
 
 

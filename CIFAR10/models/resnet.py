@@ -23,25 +23,25 @@ def conv3x3(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
 
 
-def Quantconv3x3(in_planes, out_planes, stride=1, additive=True, train_alpha=True, weightnorm=True, shift=False, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0, base=2):
+def Quantconv3x3(in_planes, out_planes, stride=1, shift=False,**kwargs):
     " 3x3 quantized convolution with padding "
     if shift:
-        return ShiftConv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init, base=base)
+        return ShiftConv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False, **kwargs)
     else:
-        return QuantConv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init, base=base)
+        return QuantConv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False, **kwargs)
 
 
 class BasicBlock(nn.Module):
     expansion=1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, float=False, additive=True, train_alpha=True, weightnorm=True, shift=False, gridnorm=True, wgt_alpha_init=3.0, act_alpha_init=8.0, base=2):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, float=False, **kwargs):
         super(BasicBlock, self).__init__()
         if float:
             self.conv1 = conv3x3(inplanes, planes, stride)
             self.conv2 = conv3x3(planes, planes)
         else:
-            self.conv1 = Quantconv3x3(inplanes, planes, stride, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, shift=shift, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init, base=base)
-            self.conv2 = Quantconv3x3(planes, planes, additive=additive, train_alpha=train_alpha, weightnorm=weightnorm, shift=shift, gridnorm=gridnorm, wgt_alpha_init=wgt_alpha_init, act_alpha_init=act_alpha_init, base=base)
+            self.conv1 = Quantconv3x3(inplanes, planes, stride, **kwargs)
+            self.conv2 = Quantconv3x3(planes, planes, **kwargs)
         self.bn1 = nn.BatchNorm2d(planes)
         self.relu = nn.ReLU(inplace=True)
         self.bn2 = nn.BatchNorm2d(planes)
